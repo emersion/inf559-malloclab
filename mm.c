@@ -23,16 +23,17 @@
  * provide your team information in the following struct.
  ********************************************************/
 team_t team = {
-    /* Team name */
-    "​👌​👌​",
-    /* First member's full name */
-    "Simon Ser",
-    /* First member's email address */
-    "simon.ser@polytechnique.fr",
-    /* Second member's full name (leave blank if none) */
-    "",
-    /* Second member's email address (leave blank if none) */
-    ""};
+  /* Team name */
+  "​👌​👌​",
+  /* First member's full name */
+  "Simon Ser",
+  /* First member's email address */
+  "simon.ser@polytechnique.fr",
+  /* Second member's full name (leave blank if none) */
+  "",
+  /* Second member's email address (leave blank if none) */
+  "",
+};
 
 /* single word (4) or double word (8) alignment */
 #define ALIGNMENT 8
@@ -45,7 +46,9 @@ team_t team = {
 /*
  * mm_init - initialize the malloc package.
  */
-int mm_init(void) { return 0; }
+int mm_init(void) {
+  return 0;
+}
 
 /*
  * mm_malloc - Allocate a block by incrementing the brk pointer.
@@ -54,9 +57,9 @@ int mm_init(void) { return 0; }
 void *mm_malloc(size_t size) {
   int newsize = ALIGN(size + SIZE_T_SIZE);
   void *p = mem_sbrk(newsize);
-  if (p == (void *)-1)
+  if (p == (void *)-1) {
     return NULL;
-  else {
+  } else {
     *(size_t *)p = size;
     return (void *)((char *)p + SIZE_T_SIZE);
   }
@@ -65,7 +68,9 @@ void *mm_malloc(size_t size) {
 /*
  * mm_free - Freeing a block does nothing.
  */
-void mm_free(void *ptr) {}
+void mm_free(void *ptr) {
+  // No-op
+}
 
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
@@ -76,11 +81,13 @@ void *mm_realloc(void *ptr, size_t size) {
   size_t copySize;
 
   newptr = mm_malloc(size);
-  if (newptr == NULL)
+  if (newptr == NULL) {
     return NULL;
+  }
   copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-  if (size < copySize)
+  if (size < copySize) {
     copySize = size;
+  }
   memcpy(newptr, oldptr, copySize);
   mm_free(oldptr);
   return newptr;
