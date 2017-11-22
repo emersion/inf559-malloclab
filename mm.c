@@ -174,21 +174,21 @@ void mm_free(void *payload) {
 
 void *mm_realloc(void *payload, size_t size) {
   void *old_payload = payload;
-  size_t old_size = block_size(block_from_payload(old_payload));
+  void *old_block = block_from_payload(old_payload);
+
+  size_t old_size = block_payload_size(old_block);
   size_t new_size = size;
+
+  if (old_size >= new_size) {
+    // TODO: shrink old block size, add new free block
+    return old_payload;
+  }
 
   void *new_payload = mm_malloc(size);
   if (new_payload == NULL) {
     return NULL;
   }
-
-  size_t n = old_size;
-  if (new_size < old_size) {
-    n = new_size;
-  }
-  memcpy(new_payload, old_payload, n);
-
+  memcpy(new_payload, old_payload, old_size);
   mm_free(old_payload);
-
   return new_payload;
 }
