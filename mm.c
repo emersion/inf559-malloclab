@@ -118,11 +118,18 @@ inline void block_set_allocated(void *block, int allocated) {
 }
 
 int mm_init(void) {
-  block_create(0);
+  void *init_block = block_create(0);
+  if (init_block == NULL) {
+    return -1;
+  }
   return 0;
 }
 
 void *mm_malloc(size_t size) {
+  if (size == 0) {
+    return NULL;
+  }
+
   void *block = mem_heap_lo();
   while (block != NULL) {
     if (block_payload_size(block) >= size && !block_allocated(block)) {
@@ -173,6 +180,14 @@ void mm_free(void *payload) {
 }
 
 void *mm_realloc(void *payload, size_t size) {
+  if (payload == NULL) {
+    return mm_malloc(size);
+  }
+  if (size == 0) {
+    mm_free(payload);
+    return NULL;
+  }
+
   void *old_payload = payload;
   void *old_block = block_from_payload(old_payload);
 
@@ -198,7 +213,7 @@ void *mm_realloc(void *payload, size_t size) {
     }
   }
 
-  void *new_payload = mm_malloc(size);
+  void *new_payload = mm_malloc(new_size);
   if (new_payload == NULL) {
     return NULL;
   }
