@@ -57,7 +57,7 @@ inline size_t block_size(void *block) {
 inline void block_set_tag(void *block, size_t size, int allocated) {
   size_t tag = size | (size_t)allocated;
 
-  size_t *header = block;
+  size_t *header = (size_t *)block;
   *header = tag;
 
   size_t *footer = (size_t *)((char *)block + size - BLOCK_TAG_SIZE);
@@ -76,14 +76,26 @@ inline void *block_payload(void *block) {
   return (char *)block + BLOCK_TAG_SIZE;
 }
 
-inline void *block_next(void *block) {
-  return (char *)block + block_size(block);
+void *block_next(void *block) {
+  void *next = (char *)block + block_size(block);
+  if (next > mem_heap_hi()) {
+    return NULL;
+  }
+  return next;
 }
 
-inline void *block_prev(void *block) {
+void *block_prev(void *block) {
+  if (block <= mem_heap_lo()) {
+    return NULL;
+  }
+
   size_t *prev_footer = (size_t *)((char *)block - BLOCK_TAG_SIZE);
   size_t prev_size = *prev_footer & BLOCK_TAG_SIZE_MASK;
-  return (char *)block - prev_size;
+  void *prev = (char *)block - prev_size;
+  if (prev < mem_heap_lo()) {
+    return NULL;
+  }
+  return prev;
 }
 
 void *block_create(size_t payload_size) {
@@ -106,13 +118,13 @@ inline void block_set_allocated(void *block, int allocated) {
 }
 
 int mm_init(void) {
+  block_create(0);
   return 0;
 }
 
 void *mm_malloc(size_t size) {
   void *block = mem_heap_lo();
-  void *end = mem_heap_hi();
-  while (block < end) {
+  while (block != NULL) {
     if (block_payload_size(block) >= size && !block_allocated(block)) {
       block_set_allocated(block, 1);
       return block_payload(block);
@@ -129,11 +141,35 @@ void *mm_malloc(size_t size) {
   return block_payload(block);
 }
 
+#define COALESCE 1
+
 void mm_free(void *payload) {
   if (payload == NULL) {
     return;
   }
-  block_set_allocated(block_from_payload(payload), 0);
+
+  void *block = block_from_payload(payload);
+#if COALESCE
+  void *prev = block_prev(block);
+  void *next = block_next(block);
+
+  int prev_allocated = prev && block_allocated(prev);
+  int next_allocated = next && block_allocated(next);
+  if (prev && !prev_allocated && next && !next_allocated) {
+    size_t new_size = block_size(prev) + block_size(block) + block_size(next);
+    block_set_tag(prev, new_size, 0);
+  } else if (prev && !prev_allocated) {
+    size_t new_size = block_size(prev) + block_size(block);
+    block_set_tag(prev, new_size, 0);
+  } else if (next && !next_allocated) {
+    size_t new_size = block_size(block) + block_size(next);
+    block_set_tag(block, new_size, 0);
+  } else {
+    block_set_allocated(block, 0);
+  }
+#else
+  block_set_allocated(block, 0);
+#endif
 }
 
 void *mm_realloc(void *payload, size_t size) {
