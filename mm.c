@@ -148,15 +148,12 @@ void *mm_malloc(size_t size) {
   return block_payload(block);
 }
 
-#define COALESCE 1
-
 void mm_free(void *payload) {
   if (payload == NULL) {
     return;
   }
 
   void *block = block_from_payload(payload);
-#if COALESCE
   void *prev = block_prev(block);
   void *next = block_next(block);
 
@@ -174,9 +171,6 @@ void mm_free(void *payload) {
   } else {
     block_set_allocated(block, 0);
   }
-#else
-  block_set_allocated(block, 0);
-#endif
 }
 
 void *mm_realloc(void *payload, size_t size) {
