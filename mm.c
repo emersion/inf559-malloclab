@@ -41,62 +41,68 @@ team_t team = {
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~0x7)
 
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+#define BLOCK_TAG_SIZE (ALIGN(sizeof(size_t)))
+#define BLOCK_TAG_ALLOCATED_MASK ((size_t)1)
+#define BLOCK_TAG_SIZE_MASK (~(size_t)1)
 
-// TODO: header too big (8 bytes)
-
-#define BLOCK_HEADER_SIZE_MASK (~(size_t)1)
-
-inline size_t *block_header(void *block) {
-  return block;
+inline size_t block_tag(void *block) {
+  size_t *header = block;
+  return *header;
 }
 
 inline size_t block_size(void *block) {
-  size_t *header = block_header(block);
-  return *header & BLOCK_HEADER_SIZE_MASK;
+  return block_tag(block) & BLOCK_TAG_SIZE_MASK;
+}
+
+inline void block_set_tag(void *block, size_t size, int allocated) {
+  size_t tag = size | (size_t)allocated;
+
+  size_t *header = block;
+  *header = tag;
+
+  size_t *footer = (size_t *)((char *)block + size - BLOCK_TAG_SIZE);
+  *footer = tag;
 }
 
 inline size_t block_payload_size(void *block) {
-  size_t size = block_size(block);
-  return size - SIZE_T_SIZE;
+  return block_size(block) - 2*BLOCK_TAG_SIZE;
 }
 
 inline int block_allocated(void *block) {
-  size_t *header = block_header(block);
-  return *header & 1;
+  return block_tag(block) & BLOCK_TAG_ALLOCATED_MASK;
 }
 
 inline void *block_payload(void *block) {
-  return (char *)block + SIZE_T_SIZE;
+  return (char *)block + BLOCK_TAG_SIZE;
 }
 
 inline void *block_next(void *block) {
   return (char *)block + block_size(block);
 }
 
-inline void block_init(void *block, size_t size, int allocated) {
-  size_t *header = block_header(block);
-  *header = size | (size_t)allocated;
+inline void *block_prev(void *block) {
+  size_t *prev_footer = (size_t *)((char *)block - BLOCK_TAG_SIZE);
+  size_t prev_size = *prev_footer & BLOCK_TAG_SIZE_MASK;
+  return (char *)block - prev_size;
 }
 
 void *block_create(size_t payload_size) {
-  int size = ALIGN(payload_size + SIZE_T_SIZE);
+  int size = ALIGN(payload_size + 2*BLOCK_TAG_SIZE);
   void *block = mem_sbrk(size);
   if (block == (void *)-1) {
     return NULL;
   }
 
-  block_init(block, size, 1);
+  block_set_tag(block, size, 1);
   return block;
 }
 
 void *block_from_payload(void *payload) {
-  return (char *)payload - SIZE_T_SIZE;
+  return (char *)payload - BLOCK_TAG_SIZE;
 }
 
 inline void block_set_allocated(void *block, int allocated) {
-  size_t *header = block_header(block);
-  *header = block_size(block) | (size_t)allocated;
+  block_set_tag(block, block_size(block), allocated);
 }
 
 int mm_init(void) {
@@ -130,20 +136,23 @@ void mm_free(void *payload) {
   block_set_allocated(block_from_payload(payload), 0);
 }
 
-void *mm_realloc(void *ptr, size_t size) {
-  void *oldptr = ptr;
-  void *newptr;
-  size_t copySize;
+void *mm_realloc(void *payload, size_t size) {
+  void *old_payload = payload;
+  size_t old_size = block_size(block_from_payload(old_payload));
+  size_t new_size = size;
 
-  newptr = mm_malloc(size);
-  if (newptr == NULL) {
+  void *new_payload = mm_malloc(size);
+  if (new_payload == NULL) {
     return NULL;
   }
-  copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-  if (size < copySize) {
-    copySize = size;
+
+  size_t n = old_size;
+  if (new_size < old_size) {
+    n = new_size;
   }
-  memcpy(newptr, oldptr, copySize);
-  mm_free(oldptr);
-  return newptr;
+  memcpy(new_payload, old_payload, n);
+
+  mm_free(old_payload);
+
+  return new_payload;
 }
