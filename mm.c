@@ -180,8 +180,22 @@ void *mm_realloc(void *payload, size_t size) {
   size_t new_size = size;
 
   if (old_size >= new_size) {
-    // TODO: shrink old block size, add new free block
+    // TODO: shrink old block size, add new free block?
     return old_payload;
+  }
+
+  // Find if we can use next blocks without copying memory
+  size_t n = 0;
+  void *block = block_next(old_block);
+  while (block != NULL && !block_allocated(block)) {
+    n += block_size(block);
+    block = block_next(block);
+
+    if (old_size + n >= new_size) {
+      size_t new_size = block_size(old_block) + n;
+      block_set_tag(old_block, new_size, 1);
+      return old_payload;
+    }
   }
 
   void *new_payload = mm_malloc(size);
