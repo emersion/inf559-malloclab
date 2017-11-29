@@ -1,5 +1,8 @@
 /*
- * A simple memory allocator with a LIFO explicit free list.
+ * A simple memory allocator with a segregated LIFO explicit free list.
+ *
+ * Blocks are grouped by classes of sizes. There is one doubly-linked list per
+ * class that contains all unallocated blocks in this class.
  *
  * Structure of blocks:
  *
@@ -23,10 +26,14 @@
  * the next one.
  *
  * The very first block of the heap is allocated on initialization and is called
- * the root block. It has a payload with the same structure as unallocated
- * blocks and is used as the head of the free list. In other words, the `prev`
- * field of the root block points to the last unallocated block and the `next`
- * field points to th first one.
+ * the root block. Structure of the root block:
+ *
+ *   +---------------+---------------+---------------+---------------+------
+ *   | void *prev[0] | void *next[0] | void *prev[1] | void *next[1] | ...
+ *   +---------------+---------------+---------------+---------------+------
+ *
+ * Its payload contains one head of free list per class. The `prev` field points
+ * to the last unallocated block and the `next` field points to the first one.
  *
  * The API is split into two groups of functions:
  * - `block_*` functions abstract blocks. They generally take the block they
@@ -64,12 +71,19 @@ team_t team = {
 #define BLOCK_TAG_ALLOCATED_MASK ((size_t)1)
 // Tag mask to get a block's size
 #define BLOCK_TAG_SIZE_MASK (~(size_t)1)
-// Minimum payload size (two pointers)
+// Minimum payload size (2 pointers for the free list)
 #define BLOCK_MIN_PAYLOAD_SIZE (2 * sizeof(void *))
 
 // Indices for unallocated blocks pointers
 #define BLOCK_UNALLOCATED_PREV 0
 #define BLOCK_UNALLOCATED_NEXT 1
+
+// List of all classes. Class i contains blocks whose payload sizes are at least
+// `block_classes[i]` bytes.
+const size_t block_classes[] = {128, 0};
+
+// Number of block classes
+#define BLOCK_CLASSES_NBR (sizeof(block_classes)/sizeof(*block_classes))
 
 // A pointer to the root block
 void *block_root = NULL;
@@ -85,6 +99,11 @@ size_t block_size(void *block) {
   return block_tag(block) & BLOCK_TAG_SIZE_MASK;
 }
 
+// Returns the block's payload size.
+size_t block_payload_size(void *block) {
+  return block_size(block) - 2*BLOCK_TAG_SIZE;
+}
+
 // Sets a block's tag.
 static void block_set_tag(void *block, size_t size, int allocated) {
   size_t tag = size | (size_t)allocated;
@@ -94,11 +113,6 @@ static void block_set_tag(void *block, size_t size, int allocated) {
 
   size_t *footer = (size_t *)((char *)block + size - BLOCK_TAG_SIZE);
   *footer = tag;
-}
-
-// Returns the block's payload size.
-size_t block_payload_size(void *block) {
-  return block_size(block) - 2*BLOCK_TAG_SIZE;
 }
 
 // Checks whether or not a block is currently allocated.
@@ -141,7 +155,7 @@ void *block_prev(void *block) {
 // Returns NULL on error.
 void *block_create(size_t payload_size) {
   // Make sure we have enough space to store two pointers in unallocated blocks
-  // payload
+  // payload for the free list
   if (payload_size < BLOCK_MIN_PAYLOAD_SIZE) {
     payload_size = BLOCK_MIN_PAYLOAD_SIZE;
   }
@@ -160,7 +174,11 @@ void *block_create(size_t payload_size) {
 // updates pointers to previous and next unallocated blocks. Moreover, it's the
 // caller's responsibility to ensure the new size doesn't make this block end
 // in the middle of another block.
+//
+// Since this function can change a block class, it can only be called on
+// allocated blocks.
 void block_set_size(void *block, size_t size) {
+  assert(block_allocated(block));
   block_set_tag(block, size, block_allocated(block));
 }
 
@@ -169,10 +187,42 @@ void *block_from_payload(void *payload) {
   return (char *)payload - BLOCK_TAG_SIZE;
 }
 
+// Returns the class of a block having a payload of `payload_size` bytes.
+static size_t class_from_payload_size(size_t payload_size) {
+  for (size_t i = 0; i < BLOCK_CLASSES_NBR; ++i) {
+    if (payload_size >= block_classes[i]) {
+      return i;
+    }
+  }
+  assert(0);
+}
+
+// Returns the pair (prev, next) of pointers of the free list. `payload_size` is
+// used when `block` is the root block.
+static void **block_unallocated_ptrs(void *block, size_t payload_size) {
+  void **ptrs = block_payload(block);
+  if (block == block_root) {
+    return &ptrs[2 * class_from_payload_size(payload_size)];
+  }
+  return ptrs;
+}
+
+// Returns the first unallocated block having a payload size of at least
+// `payload_size` bytes. `block_next_unallocated` can be used to get more blocks
+// having this size.
+void *block_first_unallocated(size_t payload_size) {
+  void **ptrs = block_unallocated_ptrs(block_root, payload_size);
+  void *first = ptrs[BLOCK_UNALLOCATED_NEXT];
+  if (first == block_root) {
+    return NULL;
+  }
+  return first;
+}
+
 // Returns the previous unallocated block, or NULL if there isn't any. The block
-// must be unallocated or the root block.
+// must be unallocated.
 void *block_prev_unallocated(void *block) {
-  assert(!block_allocated(block) || block == block_root);
+  assert(!block_allocated(block));
 
   void **ptrs = block_payload(block);
   void *prev = ptrs[BLOCK_UNALLOCATED_PREV];
@@ -185,7 +235,7 @@ void *block_prev_unallocated(void *block) {
 // Returns the next unallocated block, or NULL if there isn't any. The block
 // must be unallocated or the root block.
 void *block_next_unallocated(void *block) {
-  assert(!block_allocated(block) || block == block_root);
+  assert(!block_allocated(block));
 
   void **ptrs = block_payload(block);
   void *next = ptrs[BLOCK_UNALLOCATED_NEXT];
@@ -201,15 +251,15 @@ void *block_next_unallocated(void *block) {
 void block_set_allocated(void *block) {
   assert(!block_allocated(block));
 
-  // Removes the block from the list of unallocated blocks
+  // Remove the block from the list of unallocated blocks
   void **ptrs = block_payload(block);
   void *prev = ptrs[BLOCK_UNALLOCATED_PREV];
   void *next = ptrs[BLOCK_UNALLOCATED_NEXT];
 
-  void **prev_ptrs = block_payload(prev);
+  void **prev_ptrs = block_unallocated_ptrs(prev, block_payload_size(block));
   prev_ptrs[BLOCK_UNALLOCATED_NEXT] = next;
 
-  void **next_ptrs = block_payload(next);
+  void **next_ptrs = block_unallocated_ptrs(next, block_payload_size(block));
   next_ptrs[BLOCK_UNALLOCATED_PREV] = prev;
 
   // Update block tag
@@ -229,10 +279,10 @@ void block_set_unallocated(void *block) {
   void **ptrs = block_payload(block);
 
   void *prev = block_root;
-  void **prev_ptrs = block_payload(prev);
+  void **prev_ptrs = block_unallocated_ptrs(prev, block_payload_size(block));
 
   void *next = prev_ptrs[BLOCK_UNALLOCATED_NEXT];
-  void **next_ptrs = block_payload(next);
+  void **next_ptrs = block_unallocated_ptrs(next, block_payload_size(block));
 
   ptrs[BLOCK_UNALLOCATED_PREV] = prev;
   ptrs[BLOCK_UNALLOCATED_NEXT] = next;
@@ -244,36 +294,43 @@ void block_set_unallocated(void *block) {
 // Checks that the heap is consistent.
 #if 0 // debug
 void mm_check(void) {
-  // Loop through the free list
-  void *prev = block_root;
-  void *block = block_next_unallocated(prev);
-  while (block != NULL) {
-    // The free block must be in the heap
-    assert(mem_heap_lo() < block && block < mem_heap_hi());
-    // The free block must be marked as unallocated
-    assert(!block_allocated(block));
+  // For each class
+  for (size_t i = 0; i < BLOCK_CLASSES_NBR; ++i) {
+    // Loop through the free list
+    void *prev = block_root;
+    void *block = block_first_unallocated(block_classes[i]);
+    while (block != NULL) {
+      // The free block must be in the heap
+      assert(mem_heap_lo() < block && block < mem_heap_hi());
+      // The free block must be marked as unallocated
+      assert(!block_allocated(block));
 
-    // Check for doubly-linked free list consistency
-    if (prev == block_root) {
-      // The first block shouldn't have a previous free block
-      assert(block_prev_unallocated(block) == NULL);
-    } else {
-      assert(block_prev_unallocated(block) == prev);
+      // Check for doubly-linked free list consistency
+      if (prev == block_root) {
+        // The first block shouldn't have a previous free block
+        assert(block_prev_unallocated(block) == NULL);
+      } else {
+        assert(block_prev_unallocated(block) == prev);
+      }
+
+      prev = block;
+      block = block_next_unallocated(block);
     }
-
-    prev = block;
-    block = block_next_unallocated(block);
   }
 
   // Loop through all blocks
-  prev = NULL;
-  block = block_root;
+  void *prev = block_root;
+  void *block = block_next(prev);
   while (block != NULL) {
+    // The block must be in the heap
+    assert(mem_heap_lo() < block && block < mem_heap_hi());
+
     if (!block_allocated(block)) {
       // Disallow two contiguous unallocated blocks
       assert(prev == NULL || block_allocated(prev));
     }
 
+    prev = block;
     block = block_next(block);
   }
 }
@@ -288,14 +345,15 @@ inline void mm_check(void) {
 //
 // This function takes care of allocating and initializing the root block.
 int mm_init(void) {
-  block_root = block_create(2 * sizeof(void *));
+  block_root = block_create(2 * BLOCK_CLASSES_NBR * sizeof(void *));
   if (block_root == NULL) {
     return -1;
   }
 
   void **ptrs = block_payload(block_root);
-  ptrs[BLOCK_UNALLOCATED_PREV] = block_root;
-  ptrs[BLOCK_UNALLOCATED_NEXT] = block_root;
+  for (size_t i = 0; i < 2 * BLOCK_CLASSES_NBR; ++i) {
+    ptrs[i] = block_root;
+  }
 
   return 0;
 }
@@ -309,7 +367,7 @@ void *mm_malloc(size_t size) {
   }
 
   // First try to find a large enough unallocated block
-  void *block = block_next_unallocated(block_root);
+  void *block = block_first_unallocated(size);
   while (block != NULL) {
     if (block_payload_size(block) >= size) {
       block_set_allocated(block);
@@ -347,12 +405,16 @@ void mm_free(void *payload) {
   if (prev && !prev_allocated && next && !next_allocated) {
     // Coalesce `prev`, `block` and `next`
     size_t new_size = block_size(prev) + block_size(block) + block_size(next);
+    block_set_allocated(prev);
     block_set_allocated(next);
     block_set_size(prev, new_size);
+    block_set_unallocated(prev);
   } else if (prev && !prev_allocated) {
     // Coalesce `prev` and `block`
     size_t new_size = block_size(prev) + block_size(block);
+    block_set_allocated(prev);
     block_set_size(prev, new_size);
+    block_set_unallocated(prev);
   } else if (next && !next_allocated) {
     // Coalesce block` and `next`
     size_t new_size = block_size(block) + block_size(next);
