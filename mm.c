@@ -190,6 +190,14 @@ void block_set_allocated(void *block) {
     block_set_prev_unallocated(next_unallocated, prev_unallocated);
   }
 
+  void **root_ptrs = block_payload(block_root);
+  if (root_ptrs[1] == block) {
+    root_ptrs[1] = next_unallocated;
+  }
+  if (root_ptrs[0] == block) {
+    root_ptrs[0] = prev_unallocated;
+  }
+
   block_set_tag(block, block_size(block), 1);
 }
 
@@ -209,6 +217,53 @@ void block_set_unallocated(void *block, void *prev, void *next) {
   }
 }
 
+
+#if 0 // debug
+void mm_check(void) {
+  // Loop through the free list
+  void *prev = block_root;
+  void *block = block_next_unallocated(prev);
+  while (block != NULL) {
+    // The free block must be in the heap
+    assert(mem_heap_lo() < block && block < mem_heap_hi());
+    // The free block must be marked as unallocated
+    assert(!block_allocated(block));
+
+    // Check for doubly-linked free list consistency
+    if (prev == block_root) {
+      // The first block shouldn't have a previous free block
+      assert(block_prev_unallocated(block) == NULL);
+    } else {
+      assert(block_prev_unallocated(block) == prev);
+    }
+
+    prev = block;
+    block = block_next_unallocated(block);
+  }
+
+  // Loop through all blocks
+  prev = NULL;
+  block = block_root;
+  void *next_unallocated = block_next_unallocated(block);
+  while (block != NULL) {
+    if (!block_allocated(block)) {
+      // Disallow two contiguous unallocated blocks
+      assert(prev == NULL || block_allocated(prev));
+      // Check the free list pointer
+      assert(next_unallocated == block);
+
+      next_unallocated = block_next_unallocated(block);
+    }
+
+    block = block_next(block);
+  }
+}
+#else
+inline void mm_check(void) {
+  // No-op
+}
+#endif
+
 int mm_init(void) {
   block_root = block_create(2 * sizeof(void *));
   if (block_root == NULL) {
@@ -223,13 +278,15 @@ int mm_init(void) {
 }
 
 void *mm_malloc(size_t size) {
+  mm_check();
+
   if (size == 0) {
     return NULL;
   }
 
-  void *block = block_root;
+  void *block = block_next_unallocated(block_root);
   while (block != NULL) {
-    if (block_payload_size(block) >= size && !block_allocated(block)) {
+    if (block_payload_size(block) >= size) {
       block_set_allocated(block);
       return block_payload(block);
     }
@@ -277,6 +334,8 @@ void mm_free(void *payload) {
     void *next_unallocated = block_next_unallocated(block);
     block_set_unallocated(block, prev_unallocated, next_unallocated);
   }
+
+  mm_check();
 }
 
 void *mm_realloc(void *payload, size_t size) {
@@ -287,6 +346,8 @@ void *mm_realloc(void *payload, size_t size) {
     mm_free(payload);
     return NULL;
   }
+
+  mm_check();
 
   void *old_payload = payload;
   void *old_block = block_from_payload(old_payload);
