@@ -53,8 +53,8 @@
 
 team_t team = {
   .teamname = "​👌​👌​",
-  .name1 = "Simon Ser",
-  .id1 = "simon.ser@polytechnique.fr",
+  .name1 = "emersion",
+  .id1 = "emersion@localhost",
   .name2 = "",
   .id2 = "",
 };
