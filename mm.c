@@ -69,13 +69,13 @@ team_t team = {
 void *block_root = NULL;
 
 // Returns the block's tag.
-static inline size_t block_tag(void *block) {
+static size_t block_tag(void *block) {
   size_t *header = block;
   return *header;
 }
 
 // Returns the block size in bytes.
-inline size_t block_size(void *block) {
+size_t block_size(void *block) {
   return block_tag(block) & BLOCK_TAG_SIZE_MASK;
 }
 
@@ -91,17 +91,17 @@ static void block_set_tag(void *block, size_t size, int allocated) {
 }
 
 // Returns the block's payload size.
-inline size_t block_payload_size(void *block) {
+size_t block_payload_size(void *block) {
   return block_size(block) - 2*BLOCK_TAG_SIZE;
 }
 
 // Checks whether or not a block is currently allocated.
-inline int block_allocated(void *block) {
+int block_allocated(void *block) {
   return block_tag(block) & BLOCK_TAG_ALLOCATED_MASK;
 }
 
 // Returns a pointer to the block's payload.
-inline void *block_payload(void *block) {
+void *block_payload(void *block) {
   return (char *)block + BLOCK_TAG_SIZE;
 }
 
@@ -148,12 +148,12 @@ void *block_create(size_t payload_size) {
 // updates pointers to previous and next unallocated blocks. Moreover, it's the
 // caller's responsibility to ensure the new size doesn't make this block end
 // in the middle of another block.
-inline void block_set_size(void *block, size_t size) {
+void block_set_size(void *block, size_t size) {
   block_set_tag(block, size, block_allocated(block));
 }
 
 // Returns a block from its payload.
-inline void *block_from_payload(void *payload) {
+void *block_from_payload(void *payload) {
   return (char *)payload - BLOCK_TAG_SIZE;
 }
 
