@@ -21,8 +21,10 @@ fcyc.o: fcyc.c fcyc.h
 ftimer.o: ftimer.c ftimer.h config.h
 clock.o: clock.c clock.h
 
+.PHONY: handin
 handin:
 	cp mm.c $(HANDINDIR)/$(TEAM)-$(VERSION)-mm.c
 
+.PHONY: clean
 clean:
 	rm -f *~ *.o mdriver
