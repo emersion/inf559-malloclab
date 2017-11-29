@@ -80,8 +80,7 @@ team_t team = {
 
 // List of all classes. Class i contains blocks whose payload sizes are at least
 // `block_classes[i]` bytes.
-const size_t block_classes[] = {128, 0};
-
+const size_t block_classes[] = {2048, 128, 0};
 // Number of block classes
 #define BLOCK_CLASSES_NBR (sizeof(block_classes)/sizeof(*block_classes))
 
