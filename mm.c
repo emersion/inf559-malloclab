@@ -1,5 +1,5 @@
 /*
- * A simple memory allocator with an address-ordered explicit free list.
+ * A simple memory allocator with a LIFO explicit free list.
  *
  * Structure of blocks:
  *
@@ -66,6 +66,10 @@ team_t team = {
 #define BLOCK_TAG_SIZE_MASK (~(size_t)1)
 // Minimum payload size (two pointers)
 #define BLOCK_MIN_PAYLOAD_SIZE (2 * sizeof(void *))
+
+// Indices for unallocated blocks pointers
+#define BLOCK_UNALLOCATED_PREV 0
+#define BLOCK_UNALLOCATED_NEXT 1
 
 // A pointer to the root block
 void *block_root = NULL;
@@ -165,74 +169,30 @@ void *block_from_payload(void *payload) {
   return (char *)payload - BLOCK_TAG_SIZE;
 }
 
-// Returns the previous unallocated block, or NULL if there isn't any.
-//
-// This function has a O(1) complexity when used on unallocated or root blocks,
-// but has a O(n) complexity otherwise.
+// Returns the previous unallocated block, or NULL if there isn't any. The block
+// must be unallocated or the root block.
 void *block_prev_unallocated(void *block) {
-  if (!block_allocated(block) || block == block_root) {
-    void **ptrs = block_payload(block);
-    return ptrs[0];
-  }
+  assert(!block_allocated(block) || block == block_root);
 
-  void *prev = block_prev(block);
-  while (prev != NULL) {
-    if (!block_allocated(prev)) {
-      return prev;
-    }
-    prev = block_prev(prev);
+  void **ptrs = block_payload(block);
+  void *prev = ptrs[BLOCK_UNALLOCATED_PREV];
+  if (prev == block_root) {
+    return NULL;
   }
-
-  return NULL;
+  return prev;
 }
 
-// Returns the next unallocated block, or NULL if there isn't any.
-//
-// This function has a O(1) complexity when used on unallocated or root blocks,
-// but has a O(n) complexity otherwise.
+// Returns the next unallocated block, or NULL if there isn't any. The block
+// must be unallocated or the root block.
 void *block_next_unallocated(void *block) {
-  if (!block_allocated(block) || block == block_root) {
-    void **ptrs = block_payload(block);
-    return ptrs[1];
-  }
-
-  void *next = block_next(block);
-  while (next != NULL) {
-    if (!block_allocated(next)) {
-      return next;
-    }
-    next = block_next(next);
-  }
-
-  return NULL;
-}
-
-// Sets the previous unallocated block pointer. The block must be unallocated.
-void block_set_prev_unallocated(void *block, void *prev) {
-  assert(!block_allocated(block));
-  assert(!prev || !block_allocated(prev));
+  assert(!block_allocated(block) || block == block_root);
 
   void **ptrs = block_payload(block);
-  ptrs[0] = prev;
-
-  if (prev != NULL) {
-    void **prev_ptrs = block_payload(prev);
-    prev_ptrs[1] = block;
+  void *next = ptrs[BLOCK_UNALLOCATED_NEXT];
+  if (next == block_root) {
+    return NULL;
   }
-}
-
-// Sets the next unallocated block pointer. The block must be unallocated.
-void block_set_next_unallocated(void *block, void *next) {
-  assert(!block_allocated(block));
-  assert(!next || !block_allocated(next));
-
-  void **ptrs = block_payload(block);
-  ptrs[1] = next;
-
-  if (next != NULL) {
-    void **next_ptrs = block_payload(next);
-    next_ptrs[0] = block;
-  }
+  return next;
 }
 
 // Marks the block as allocated.
@@ -241,50 +201,44 @@ void block_set_next_unallocated(void *block, void *next) {
 void block_set_allocated(void *block) {
   assert(!block_allocated(block));
 
-  // Update free list pointers
-  void *prev_unallocated = block_prev_unallocated(block);
-  void *next_unallocated = block_next_unallocated(block);
-  if (prev_unallocated != NULL) {
-    block_set_next_unallocated(prev_unallocated, next_unallocated);
-  } else if (next_unallocated != NULL) {
-    block_set_prev_unallocated(next_unallocated, prev_unallocated);
-  }
+  // Removes the block from the list of unallocated blocks
+  void **ptrs = block_payload(block);
+  void *prev = ptrs[BLOCK_UNALLOCATED_PREV];
+  void *next = ptrs[BLOCK_UNALLOCATED_NEXT];
 
-  // Update free list head
-  void **root_ptrs = block_payload(block_root);
-  if (root_ptrs[1] == block) {
-    root_ptrs[1] = next_unallocated;
-  }
-  if (root_ptrs[0] == block) {
-    root_ptrs[0] = prev_unallocated;
-  }
+  void **prev_ptrs = block_payload(prev);
+  prev_ptrs[BLOCK_UNALLOCATED_NEXT] = next;
+
+  void **next_ptrs = block_payload(next);
+  next_ptrs[BLOCK_UNALLOCATED_PREV] = prev;
 
   // Update block tag
   block_set_tag(block, block_size(block), 1);
 }
 
-// Marks the block as unallocated. `prev` and `next` are pointers to the
-// previous and next unallocated blocks.
+// Marks the block as unallocated.
 //
 // This function takes care of updating the free list pointers as necessary.
-void block_set_unallocated(void *block, void *prev, void *next) {
+void block_set_unallocated(void *block) {
   assert(block_allocated(block));
 
   // Update block tag
   block_set_tag(block, block_size(block), 0);
 
-  // Update free list pointers
-  block_set_prev_unallocated(block, prev);
-  block_set_next_unallocated(block, next);
+  // Insert the block at the head of the free list
+  void **ptrs = block_payload(block);
 
-  // Update free list head
-  void **root_ptrs = block_payload(block_root);
-  if (root_ptrs[1] == NULL || block < root_ptrs[1]) {
-    root_ptrs[1] = block;
-  }
-  if (root_ptrs[0] == NULL || block > root_ptrs[0]) {
-    root_ptrs[0] = block;
-  }
+  void *prev = block_root;
+  void **prev_ptrs = block_payload(prev);
+
+  void *next = prev_ptrs[BLOCK_UNALLOCATED_NEXT];
+  void **next_ptrs = block_payload(next);
+
+  ptrs[BLOCK_UNALLOCATED_PREV] = prev;
+  ptrs[BLOCK_UNALLOCATED_NEXT] = next;
+
+  prev_ptrs[BLOCK_UNALLOCATED_NEXT] = block;
+  next_ptrs[BLOCK_UNALLOCATED_PREV] = block;
 }
 
 // Checks that the heap is consistent.
@@ -314,15 +268,10 @@ void mm_check(void) {
   // Loop through all blocks
   prev = NULL;
   block = block_root;
-  void *next_unallocated = block_next_unallocated(block);
   while (block != NULL) {
     if (!block_allocated(block)) {
       // Disallow two contiguous unallocated blocks
       assert(prev == NULL || block_allocated(prev));
-      // Check the free list pointer
-      assert(next_unallocated == block);
-
-      next_unallocated = block_next_unallocated(block);
     }
 
     block = block_next(block);
@@ -344,9 +293,9 @@ int mm_init(void) {
     return -1;
   }
 
-  void **root_payload = block_payload(block_root);
-  root_payload[0] = NULL;
-  root_payload[1] = NULL;
+  void **ptrs = block_payload(block_root);
+  ptrs[BLOCK_UNALLOCATED_PREV] = block_root;
+  ptrs[BLOCK_UNALLOCATED_NEXT] = block_root;
 
   return 0;
 }
@@ -398,9 +347,8 @@ void mm_free(void *payload) {
   if (prev && !prev_allocated && next && !next_allocated) {
     // Coalesce `prev`, `block` and `next`
     size_t new_size = block_size(prev) + block_size(block) + block_size(next);
-    void *next_unallocated = block_next_unallocated(next);
+    block_set_allocated(next);
     block_set_size(prev, new_size);
-    block_set_next_unallocated(prev, next_unallocated);
   } else if (prev && !prev_allocated) {
     // Coalesce `prev` and `block`
     size_t new_size = block_size(prev) + block_size(block);
@@ -408,15 +356,12 @@ void mm_free(void *payload) {
   } else if (next && !next_allocated) {
     // Coalesce block` and `next`
     size_t new_size = block_size(block) + block_size(next);
-    void *prev_unallocated = block_prev_unallocated(next);
-    void *next_unallocated = block_next_unallocated(next);
+    block_set_allocated(next);
     block_set_size(block, new_size);
-    block_set_unallocated(block, prev_unallocated, next_unallocated);
+    block_set_unallocated(block);
   } else {
     // Just mark this block as unallocated
-    void *prev_unallocated = block_prev_unallocated(block);
-    void *next_unallocated = block_next_unallocated(block);
-    block_set_unallocated(block, prev_unallocated, next_unallocated);
+    block_set_unallocated(block);
   }
 
   mm_check();
