@@ -64,6 +64,8 @@ team_t team = {
 #define BLOCK_TAG_ALLOCATED_MASK ((size_t)1)
 // Tag mask to get a block's size
 #define BLOCK_TAG_SIZE_MASK (~(size_t)1)
+// Minimum payload size (two pointers)
+#define BLOCK_MIN_PAYLOAD_SIZE (2 * sizeof(void *))
 
 // A pointer to the root block
 void *block_root = NULL;
@@ -134,6 +136,12 @@ void *block_prev(void *block) {
 //
 // Returns NULL on error.
 void *block_create(size_t payload_size) {
+  // Make sure we have enough space to store two pointers in unallocated blocks
+  // payload
+  if (payload_size < BLOCK_MIN_PAYLOAD_SIZE) {
+    payload_size = BLOCK_MIN_PAYLOAD_SIZE;
+  }
+
   int size = ALIGN(payload_size + 2*BLOCK_TAG_SIZE);
   void *block = mem_sbrk(size);
   if (block == (void *)-1) {
