@@ -188,7 +188,8 @@ void *block_from_payload(void *payload) {
 
 // Returns the class of a block having a payload of `payload_size` bytes.
 static size_t class_from_payload_size(size_t payload_size) {
-  for (size_t i = 0; i < BLOCK_CLASSES_NBR; ++i) {
+  size_t i;
+  for (i = 0; i < BLOCK_CLASSES_NBR; ++i) {
     if (payload_size >= block_classes[i]) {
       return i;
     }
@@ -350,7 +351,8 @@ int mm_init(void) {
   }
 
   void **ptrs = block_payload(block_root);
-  for (size_t i = 0; i < 2 * BLOCK_CLASSES_NBR; ++i) {
+  size_t i;
+  for (i = 0; i < 2 * BLOCK_CLASSES_NBR; ++i) {
     ptrs[i] = block_root;
   }
 
@@ -461,7 +463,8 @@ void *mm_realloc(void *payload, size_t size) {
     if (old_size + n >= new_size) {
       // We found enough unallocated blocks right after this one
       // First mark all blocks as allocated
-      for (void *b = block_next(old_block); b != NULL && b <= block; b = block_next(b)) {
+      void *b;
+      for (b = block_next(old_block); b != NULL && b <= block; b = block_next(b)) {
         block_set_allocated(b);
       }
       // Then resize this block
